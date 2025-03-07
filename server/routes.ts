@@ -1,4 +1,4 @@
-              import type { Express, Request, Response, NextFunction } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
               import { createServer, type Server } from "http";
               import express from "express";
               import { setupAuth } from "./auth";
@@ -182,14 +182,79 @@
                   res.json(req.user);
                 });
 
+                // Get user by ID
+                router.get("/users/:userId", async (req: Request, res: Response) => {
+                  try {
+                    const userId = Number(req.params.userId);
+                    if (isNaN(userId)) {
+                      return res.status(400).json({ error: "Invalid user ID" });
+                    }
+
+                    const user = await storage.getUser(userId);
+                    if (!user) {
+                      return res.status(404).json({ error: "User not found" });
+                    }
+
+                    // Return only public user data
+                    res.json({
+                      id: user.id,
+                      name: user.name,
+                      username: user.username,
+                      avatar: user.avatar,
+                      department: user.department,
+                      profileCompleted: user.profileCompleted
+                    });
+                  } catch (error) {
+                    console.error("Failed to fetch user:", error);
+                    res.status(500).json({ error: "Failed to fetch user" });
+                  }
+                });
+
+                // Get user's posts
+                router.get("/users/:userId/posts", async (req: Request, res: Response) => {
+                  try {
+                    const userId = Number(req.params.userId);
+                    if (isNaN(userId)) {
+                      return res.status(400).json({ error: "Invalid user ID" });
+                    }
+
+                    const posts = await storage.getPostsByUser(userId);
+                    res.json(posts || []);
+                  } catch (error) {
+                    console.error("Failed to fetch user posts:", error);
+                    res.status(500).json({ error: "Failed to fetch user posts" });
+                  }
+                });
+
+                // Get user's friends
+                router.get("/users/:userId/friends", async (req: Request, res: Response) => {
+                  try {
+                    const userId = Number(req.params.userId);
+                    if (isNaN(userId)) {
+                      return res.status(400).json({ error: "Invalid user ID" });
+                    }
+
+                    const friendships = await storage.getFriends(userId);
+                    res.json(friendships || []);
+                  } catch (error) {
+                    console.error("Failed to fetch user friends:", error);
+                    res.status(500).json({ error: "Failed to fetch user friends" });
+                  }
+                });
+
                 router.post("/complete-profile", async (req: Request, res: Response, next: NextFunction) => {
                   if (!req.isAuthenticated()) return res.sendStatus(401);
 
                   try {
                     const profileData = req.body;
-                    
+
+                    // Validate profile data
+                    if (!profileData) {
+                      return res.status(400).json({ error: "No profile data provided" });
+                    }
+
                     // Handle image upload separately
-                    if (profileData.avatar?.startsWith('data:image')) {
+                    if (profileData.avatar && typeof profileData.avatar === 'string' && profileData.avatar.startsWith('data:image')) {
                       try {
                         profileData.avatar = await storage.uploadImage(profileData.avatar);
                       } catch (error) {
@@ -198,8 +263,15 @@
                       }
                     }
 
+                    // Ensure profileCompleted is set correctly (as integer for SQLite)
+                    profileData.profileCompleted = 1;
+
                     // Update user profile with sanitized data
                     const updatedUser = await storage.updateUserProfile(req.user.id, profileData);
+
+                    if (!updatedUser) {
+                      return res.status(500).json({ error: "Failed to update user profile" });
+                    }
 
                     // Update session with new user data
                     req.login(updatedUser, (err) => {
@@ -210,54 +282,89 @@
                     console.error("Profile completion error:", error);
                     res.status(500).json({ 
                       error: "Failed to complete profile", 
-                      message: error.message 
+                      message: error instanceof Error ? error.message : "Unknown error" 
                     });
                   }
                 });
 
                 // Friends Endpoints
-router.get("/users/suggestions", async (req: Request, res: Response) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
+                router.get("/users/suggestions", async (req: Request, res: Response) => {
+                    if (!req.isAuthenticated()) return res.sendStatus(401);
 
-    try {
-        const currentUser = req.user as any; // Ensure proper typing
-        const domain = currentUser.email.split('@')[1];
+                    try {
+                        const currentUser = req.user as any; // Ensure proper typing
+                        const domain = currentUser.email.split('@')[1];
 
-        const suggestedUsers = await db.query.users.findMany({
-            where: and(
-                like(users.email, `%@${domain}%`), // Ensure proper wildcard placement
-                ne(users.id, currentUser.id)
-            )
-        });
+                        const suggestedUsers = await db.query.users.findMany({
+                            where: and(
+                                like(users.email, `%@${domain}%`), // Ensure proper wildcard placement
+                                ne(users.id, currentUser.id)
+                            )
+                        });
 
-        // Fetch friendships after getting suggested users
-        const friendships = await db.select()
-            .from(friends)
-            .where(or(
-                eq(friends.userId, currentUser.id),
-                eq(friends.friendId, currentUser.id)
-            ));
+                        // Fetch friendships after getting suggested users
+                        const friendships = await db.select()
+                            .from(friends)
+                            .where(or(
+                                eq(friends.userId, currentUser.id),
+                                eq(friends.friendId, currentUser.id)
+                            ));
 
-        // Enhance suggested users with friendship status
-        const enhanced = suggestedUsers.map(user => {
-            const friendship = friendships.find(f =>
-                [f.userId, f.friendId].includes(user.id)
-            );
-            return {
-                ...user,
-                friendshipStatus: friendship?.status || null,
-                isRequester: friendship?.userId === currentUser.id
-            };
-        });
+                        // Enhance suggested users with friendship status
+                        const enhanced = suggestedUsers.map(user => {
+                            const friendship = friendships.find(f =>
+                                [f.userId, f.friendId].includes(user.id)
+                            );
+                            return {
+                                ...user,
+                                friendshipStatus: friendship?.status || null,
+                                isRequester: friendship?.userId === currentUser.id
+                            };
+                        });
 
-        res.json(enhanced);
-    } catch (error) {
-        console.error("Failed to fetch suggestions:", error);
-        res.status(500).json({ error: "Failed to fetch suggestions" });
-    }
-});
+                        res.json(enhanced);
+                    } catch (error) {
+                        console.error("Failed to fetch suggestions:", error);
+                        res.status(500).json({ error: "Failed to fetch suggestions" });
+                    }
+                });
 
 
+                // Add a new endpoint for friend requests
+                router.post("/friends", async (req: Request, res: Response) => {
+                  if (!req.isAuthenticated()) return res.sendStatus(401);
+                  const friendId = Number(req.body.friendId);
+                  if (!friendId) return res.status(400).json({ error: "Invalid friend ID" });
+
+                  try {
+                    const existing = await db.query.friends.findFirst({
+                      where: or(
+                        and(eq(friends.userId, req.user.id), eq(friends.friendId, friendId)),
+                        and(eq(friends.userId, friendId), eq(friends.friendId, req.user.id))
+                      )
+                    });
+
+                    if (existing) return res.status(409).json({ 
+                      error: "Existing relationship", 
+                      status: existing.status 
+                    });
+
+                    const [friendship] = await db.insert(friends)
+                      .values({ 
+                        userId: req.user.id, 
+                        friendId, 
+                        status: "pending" 
+                      })
+                      .returning();
+
+                    res.status(201).json(friendship);
+                  } catch (error) {
+                    console.error("Failed to send request:", error);
+                    res.status(500).json({ error: "Failed to send request" });
+                  }
+                });
+
+                // Keep the original endpoint for backward compatibility
                 router.post("/friends/request", async (req: Request, res: Response) => {
                   if (!req.isAuthenticated()) return res.sendStatus(401);
                   const friendId = Number(req.body.friendId);
