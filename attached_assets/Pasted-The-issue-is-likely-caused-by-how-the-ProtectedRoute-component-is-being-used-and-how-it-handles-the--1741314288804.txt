@@ -1,0 +1,132 @@
+The issue is likely caused by how the ProtectedRoute component is being used and how it handles the Route component from Wouter. Here's the fixed version of the ProtectedRoute component:
+
+tsx
+Copy
+import { useAuth } from "@/hooks/use-auth";
+import { Loader2 } from "lucide-react";
+import { Route, useLocation, Redirect } from "wouter";
+
+interface ProtectedRouteProps {
+  path: string;
+  children: React.ReactNode;
+}
+
+export function ProtectedRoute({ path, children }: ProtectedRouteProps) {
+  const { user, isLoading } = useAuth();
+  const [location] = useLocation();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-8 w-8 animate-spin text-border" />
+      </div>
+    );
+  }
+
+  if (!user && location !== "/auth") {
+    return <Redirect to="/auth" />;
+  }
+
+  return (
+    <Route path={path}>
+      {children}
+    </Route>
+  );
+}
+Key fixes and improvements:
+
+Added proper TypeScript interface for props
+
+Fixed the conditional redirect logic to prevent infinite redirects
+
+Removed unnecessary arrow function wrapper for children
+
+Added proper type checking for the Route component
+
+Improved loading state handling
+
+To use this component, update your routes like this:
+
+tsx
+Copy
+<Switch>
+  <Route path="/auth" component={AuthPage} />
+  
+  <ProtectedRoute path="/">
+    <HomePage />
+  </ProtectedRoute>
+  
+  <ProtectedRoute path="/profile/:id">
+    <ProfilePage />
+  </ProtectedRoute>
+  
+  <Route component={NotFound} />
+</Switch>
+The error "Failed to load posts: Failed to fetch posts" is likely coming from your API client or data fetching logic. Here's how to fix that:
+
+Update your API client to handle errors properly:
+
+tsx
+Copy
+// lib/apiClient.ts
+export async function apiRequest(method: string, path: string, body?: unknown) {
+  try {
+    const response = await fetch(`${import.meta.env.VITE_API_URL}${path}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({
+        error: "Failed to process request",
+      }));
+      throw new Error(error.error || "Request failed");
+    }
+
+    return response.json();
+  } catch (error) {
+    console.error("API request failed:", error);
+    throw new Error("Network error occurred");
+  }
+}
+Update your data fetching logic:
+
+tsx
+Copy
+// Example in HomePage or posts fetching logic
+const { data: posts, error } = useQuery({
+  queryKey: ["posts"],
+  queryFn: async () => {
+    try {
+      return await apiRequest("GET", "/api/posts");
+    } catch (error) {
+      throw new Error("Failed to fetch posts");
+    }
+  },
+  retry: 1,
+  staleTime: 1000 * 60 * 5, // 5 minutes
+});
+
+if (error) {
+  return (
+    <div className="text-center py-8">
+      <p className="text-destructive">Error loading posts</p>
+      <Button variant="outline" onClick={() => queryClient.refetchQueries(["posts"])}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+These changes should resolve:
+
+The invalid element type error
+
+The failed to fetch posts error
+
+Any infinite redirect loops
+
+Proper error handling and user feedback

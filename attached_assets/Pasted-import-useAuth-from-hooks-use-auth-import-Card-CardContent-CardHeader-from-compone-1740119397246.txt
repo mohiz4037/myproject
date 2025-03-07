@@ -1,0 +1,260 @@
+import { useAuth } from "@/hooks/use-auth";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Input } from "@/components/ui/input";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { Post, insertPostSchema } from "@shared/schema";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useState } from "react";
+import { Loader2, Heart, MessageSquare, ThumbsUp, Send } from "lucide-react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Form, FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
+import { ImageUpload } from "@/components/ui/image-upload";
+import { ImageCropDialog } from "@/components/ui/image-crop-dialog";
+
+
+export default function HomePage() {
+  const { user } = useAuth();
+  const { data: posts, isLoading } = useQuery<Post[]>({ queryKey: ["/api/posts"] });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="container max-w-4xl mx-auto py-8">
+        <CreatePost user={user} />
+        <div className="space-y-6 mt-8">
+          {posts?.map((post) => (
+            <PostCard key={post.id} post={post} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreatePost({ user }) {
+  const [currentImage, setCurrentImage] = useState<string | null>(null);
+  const form = useForm({
+    resolver: zodResolver(insertPostSchema),
+    defaultValues: {
+      content: "",
+      images: [],
+    },
+  });
+
+  const createPostMutation = useMutation({
+    mutationFn:async (data: { content: string; images: string[] })  => {
+      const formData = new FormData(); // Create a FormData instance
+      formData.append('content', data.content); // Append content
+      data.images.forEach((image) => formData.append('images', image)); // Append images
+      const res = await apiRequest("POST", "/api/posts", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data" // Set the content type
+        }
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/posts"] });
+      form.reset();
+      setCurrentImage(null); // Clear current image after posting
+    },
+  });
+
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <Form {...form}>
+          <form
+            onSubmit={form.handleSubmit((data) => createPostMutation.mutate(data))}
+            className="space-y-4"
+          >
+            <div className="flex gap-4">
+              <Avatar>
+                <AvatarImage src={user.avatar} />
+                <AvatarFallback>{user.name[0]}</AvatarFallback>
+              </Avatar>
+              <FormField
+                control={form.control}
+                name="content"
+                render={({ field }) => (
+                  <FormItem className="flex-1">
+                    <FormControl>
+                      <Input
+                        placeholder="What's on your mind?"
+                        {...field}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+            </div>
+            <div className="flex justify-end">
+              <Input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                id="image-upload"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                      setCurrentImage(reader.result as string);
+                      form.setValue("images", [reader.result as string]); // Keep images in form
+                    };
+                    reader.readAsDataURL(file);
+                  }
+                }}
+              />
+
+              {currentImage && ( 
+            // Show uploaded image preview
+                <div className="my-4">
+                  <h4>Image Preview:</h4>
+                  <img src={currentImage} alt="Uploaded Preview" className="rounded-lg w-full max-w-xs" />
+                </div>
+              )}
+
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => document.getElementById('image-upload')?.click()}
+              >
+                Upload Images
+              </Button>
+            </div>
+            <div className="flex justify-end">
+              <Button type="submit" disabled={createPostMutation.isPending}>
+                {createPostMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Post
+              </Button>
+            </div>
+          </form>
+        </Form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PostCard({ post }) {
+  const { user } = useAuth();
+  const [showComments, setShowComments] = useState(false);
+
+  const likeMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/posts/${post.id}/like`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/posts"] });
+    },
+  });
+
+  // Function to format date and time
+  const formatDateTime = (dateString) => {
+    const options = { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true };
+    return new Date(dateString).toLocaleDateString('en-US', options);
+  };
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center gap-4">
+        <Avatar>
+          <AvatarImage src={post.avatar} />
+          <AvatarFallback>{post.name?.[0]}</AvatarFallback>
+        </Avatar>
+        <div>
+          <p className="font-semibold">{post.name}</p>
+          <p className="text-sm text-muted-foreground">
+            {formatDateTime(post.createdAt)} {/* Displaying formatted date and time */}
+          </p>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <p className="mb-4">{post.content}</p>
+        {post.image && (
+          <img src={post.image} alt="" className="rounded-lg mb-4 max-h-96 w-full object-cover" />
+        )}
+        <div className="flex gap-4">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => likeMutation.mutate()}
+            disabled={likeMutation.isPending}
+          >
+            <Heart className="h-4 w-4 mr-2" />
+            Like
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowComments(!showComments)}
+          >
+            <MessageSquare className="h-4 w-4 mr-2" />
+            Comment
+          </Button>
+        </div>
+        {showComments && <Comments postId={post.id} />}
+      </CardContent>
+    </Card>
+  );
+}
+
+function Comments({ postId }) {
+  const { data: comments } = useQuery({ 
+    queryKey: ["/api/posts", postId, "comments"]
+  });
+  const [comment, setComment] = useState("");
+
+  const commentMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/posts/${postId}/comments`, { content: comment });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/posts", postId, "comments"] });
+      setComment("");
+    },
+  });
+
+  return (
+    <div className="mt-4 space-y-4">
+      <div className="flex gap-2">
+        <Input
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="Write a comment..."
+        />
+        <Button
+          size="icon"
+          onClick={() => commentMutation.mutate()}
+          disabled={commentMutation.isPending || !comment.trim()}
+        >
+          <Send className="h-4 w-4" />
+        </Button>
+      </div>
+      <div className="space-y-2">
+        {comments?.map((comment) => (
+          <div key={comment.id} className="flex items-start gap-2">
+            <Avatar className="h-8 w-8">
+              <AvatarImage src={comment.avatar} />
+              <AvatarFallback>{comment.name?.[0]}</AvatarFallback>
+            </Avatar>
+            <div className="bg-muted rounded-lg p-2">
+              <p className="font-semibold text-sm">{comment.name}</p>
+              <p className="text-sm">{comment.content}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
