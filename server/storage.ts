@@ -58,7 +58,7 @@ export class DatabaseStorage implements IStorage {
     const [updatedUser] = await db.update(users)
       .set({ 
         ...profileData,
-        profileCompleted: true // Fixed boolean value
+        profileCompleted: 1 // Use integer 1 instead of boolean
       })
       .where(eq(users.id, userId))
       .returning();
