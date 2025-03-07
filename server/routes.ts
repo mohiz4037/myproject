@@ -187,18 +187,31 @@
 
                   try {
                     const profileData = req.body;
+                    
+                    // Handle image upload separately
                     if (profileData.avatar?.startsWith('data:image')) {
-                      profileData.avatar = await storage.uploadImage(profileData.avatar);
+                      try {
+                        profileData.avatar = await storage.uploadImage(profileData.avatar);
+                      } catch (error) {
+                        console.error("Image upload error:", error);
+                        profileData.avatar = null; // Set to null if upload fails
+                      }
                     }
 
+                    // Update user profile with sanitized data
                     const updatedUser = await storage.updateUserProfile(req.user.id, profileData);
 
+                    // Update session with new user data
                     req.login(updatedUser, (err) => {
                       if (err) return next(err);
                       res.json(updatedUser);
                     });
                   } catch (error) {
-                    next(error);
+                    console.error("Profile completion error:", error);
+                    res.status(500).json({ 
+                      error: "Failed to complete profile", 
+                      message: error.message 
+                    });
                   }
                 });
 
